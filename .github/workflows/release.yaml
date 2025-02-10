@@ -1,0 +1,53 @@
+on:
+  push:
+    tags:
+      - v*
+
+# Releases need permissions to read and write the repository contents.
+# GitHub considers creating releases and uploading assets as writing contents.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          # We need to fetch more history (all of it, currently) so we can compare previous tags.
+          fetch-depth: 0
+      - name: Fetch tags
+        run: git fetch --force --tags
+      - name: Install Nix
+        uses: cachix/install-nix-action@v19
+      - name: Cache Nix
+        uses: actions/cache@v3.3.0
+        with:
+          key: ${{ runner.os }}-nix-${{ hashfiles('flake.lock', 'flake.nix') }}
+          path: ~/nix
+          restore-keys: |
+            ${{ runner.os }}-nix-${{ hashfiles('flake.lock', 'flake.nix') }}
+            ${{ runner.os }}-nix-
+      - name: Cache Go
+        uses: actions/cache@v3.3.0
+        with:
+          # We hash both `go.mod` in addition to `go.sum` because the version of go is only in `go.mod`.
+          key: ${{ runner.os }}-go-${{ hashfiles('go.mod', 'go.sum') }}
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          restore-keys: |
+            ${{ runner.os }}-go-${{ hashfiles('go.mod', 'go.sum') }}
+            ${{ runner.os }}-go-
+      - name: Import GPG
+        uses: crazy-max/ghaction-import-gpg@v5.2.0
+        id: import_gpg
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+      - name: Release
+        run: nix --store ~/nix develop . --command make release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
